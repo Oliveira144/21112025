@@ -4,7 +4,7 @@ import numpy as np
 
 ============================================
 
-SISTEMA PROFISSIONAL FOOTBALL STUDIO — v3.0
+SISTEMA PROFISSIONAL FOOTBALL STUDIO - v3.0
 
 100% SEM ERROS / SEM CARACTERES INVÁLIDOS
 
