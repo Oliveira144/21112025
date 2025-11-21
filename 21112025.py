@@ -20,7 +20,10 @@ App único (Streamlit) com:
 
 - Histórico detalhado, export CSV/TXT
 
-import streamlit as st import pandas as pd import numpy as np from datetime import datetime
+import streamlit as st 
+import pandas as pd 
+import numpy as np
+from datetime import datetime
 
 st.set_page_config(page_title="Football Studio Analyzer - Profissional Completo", layout="wide")
 
