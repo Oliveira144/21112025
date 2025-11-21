@@ -1,16 +1,4 @@
-football_studio_analisador_pro.py
-
-Football Studio Analyzer - Profissional Completo
-
-App único (Streamlit) com:
-
-- Força real das cartas e peso dinâmico
-
-- Leitura de padrões combinados (repetição, alternância, degrau, quebra, ciclos)
-
-- Nível de manipulação (1-9)
-
-- Detector de quebra (pontuação 0–100)
+Detector de quebra (pontuacao 0-100))
 
 - Probabilidades ponderadas RED/BLUE/TIE
 
@@ -22,7 +10,7 @@ App único (Streamlit) com:
 
 import streamlit as st 
 import pandas as pd 
-import numpy as np
+import numpy as np 
 from datetime import datetime
 
 st.set_page_config(page_title="Football Studio Analyzer - Profissional Completo", layout="wide")
