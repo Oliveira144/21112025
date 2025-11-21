@@ -1,4 +1,4 @@
-Detector de quebra (pontuacao 0-100))
+# Detector de quebra (pontuacao 0-100)
 
 - Probabilidades ponderadas RED/BLUE/TIE
 
