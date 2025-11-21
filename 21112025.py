@@ -1,71 +1,46 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
 
-# ========== CONFIG ==========
-st.set_page_config(page_title="Football Studio Analyzer - Valor + Padrão", layout="wide")
-st.title("Football Studio Analyzer — Valor + Padrão (Profissional)")
+# ========== Config ==========
+st.set_page_config(page_title="Football Studio Pro - Completo (Opção A)", layout="wide")
+st.title("Football Studio Pro — Valor + Padrão (Opção A: Casa x Visitante)")
 
-# ========== CONSTANTS ==========
-CARD_MAP = {"A":14, "K":13, "Q":12, "J":11, "10":10, "9":9, "8":8, "7":7, "6":6, "5":5, "4":4, "3":3, "2":2}
+# ========== Constantes ==========
+CARD_ORDER = ["2","3","4","5","6","7","8","9","10","J","Q","K","A"]
+CARD_MAP = {"2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8,"9":9,"10":10,"J":11,"Q":12,"K":13,"A":14}
 HIGH = {"A","K","Q","J"}
 MEDIUM = {"10","9","8"}
 LOW = {"7","6","5","4","3","2"}
 CARD_STRENGTH = {"A":5,"K":5,"Q":5,"J":4,"10":4,"9":3,"8":3,"7":2,"6":1,"5":1,"4":1,"3":1,"2":1}
-CARD_ORDER = ["A","K","Q","J","10","9","8","7","6","5","4","3","2"]
 
-DEFAULT_BREAK_THRESHOLD = 50  # percent
-MAX_COLS = 9
-MAX_LINES = 10
+MAX_DISPLAY = 90
 
-# ========== HELPERS ==========
-def normalize_card_label(label: str) -> str:
-    return str(label).strip().upper()
-
-def card_value(label: str) -> int:
-    return CARD_MAP.get(normalize_card_label(label), 0)
-
-def card_class(label: str) -> str:
-    lab = normalize_card_label(label)
-    if lab in HIGH:
-        return "alta"
-    if lab in MEDIUM:
-        return "media"
-    if lab in LOW:
-        return "baixa"
-    return "tie"
-
-def card_strength(label: str) -> int:
-    return CARD_STRENGTH.get(normalize_card_label(label), 0)
-
-# ========== SESSION STATE ==========
+# ========== Estado ==========
 if "history" not in st.session_state:
     st.session_state.history = pd.DataFrame(columns=[
-        "timestamp",
-        "winner",      # RED / BLUE / TIE
-        "home_card",   # card label for BLUE (home)
-        "away_card",   # card label for RED (away)
-        "home_value",
-        "away_value",
-        "home_class",
-        "away_class",
-        "home_strength",
-        "away_strength"
+        "timestamp","winner","home_card","away_card",
+        "home_value","away_value","home_class","away_class",
+        "home_strength","away_strength"
     ])
 if "undo_stack" not in st.session_state:
     st.session_state.undo_stack = []
+# selections for quick horizontal input (keeps currently selected card for each side)
+if "sel_home" not in st.session_state:
+    st.session_state.sel_home = None
+if "sel_away" not in st.session_state:
+    st.session_state.sel_away = None
 
-# ========== SIDEBAR: SETTINGS ==========
+# ========== Sidebar ==========
 with st.sidebar:
     st.header("Controles e Configurações")
     if st.button("Resetar histórico"):
-        st.session_state.history = pd.DataFrame(columns=[
-            "timestamp","winner","home_card","away_card","home_value","away_value",
-            "home_class","away_class","home_strength","away_strength"
-        ])
-        st.session_state.undo_stack = []
+        st.session_state.undo_stack.append(st.session_state.history.copy())
+        st.session_state.history = st.session_state.history.iloc[0:0]
+        st.session_state.sel_home = None
+        st.session_state.sel_away = None
+        st.success("Histórico resetado.")
     st.write("---")
     csv_data = st.session_state.history.to_csv(index=False)
     st.download_button("Exportar histórico (CSV)", data=csv_data, file_name="history_football_studio.csv")
@@ -73,106 +48,176 @@ with st.sidebar:
     show_timestamps = st.checkbox("Mostrar timestamps", value=False)
     show_confidence_bar = st.checkbox("Mostrar barra de confiança", value=True)
     analysis_window = st.selectbox("Janela de análise (últimas N jogadas)", options=[3,5,8,10,20,50], index=3)
-    break_threshold = st.slider("Limite de break (%) — se >= limite → NÃO APOSTAR", min_value=30, max_value=80, value=DEFAULT_BREAK_THRESHOLD, step=5)
+    break_threshold = st.slider("Limite de break (%) para alerta forte", min_value=30, max_value=80, value=50, step=5)
     st.write("---")
-    st.caption("Entrada recomendada só quando NÃO houver break (regra OU–OU).")
+    st.caption("Home = VERMELHO (RED). Visitante = AZUL (BLUE). Opção A: registra as duas cartas por rodada.")
 
-# ========== INPUT: adicionar rodada com ambas cartas ==========
-st.subheader("Registrar rodada — insira as duas cartas (Home = Azul / Away = Vermelho)")
+# ========== Helpers ==========
+def normalize(card):
+    return str(card).strip().upper()
 
-col1, col2, col3 = st.columns([3,3,2])
-with col1:
-    home_card = st.selectbox("Carta HOME (Azul)", options=CARD_ORDER, index=8, key="home_card_select")
-with col2:
-    away_card = st.selectbox("Carta AWAY (Vermelho)", options=CARD_ORDER, index=8, key="away_card_select")
-with col3:
-    if st.button("Adicionar rodada"):
-        now = datetime.now()
-        hc = normalize_card_label(home_card)
-        ac = normalize_card_label(away_card)
-        hv = card_value(hc)
-        av = card_value(ac)
-        hc_class = card_class(hc)
-        ac_class = card_class(ac)
-        hs = card_strength(hc)
-        as_ = card_strength(ac)
-        if hv > av:
-            winner = "BLUE"
-        elif av > hv:
-            winner = "RED"
-        else:
-            winner = "TIE"
-        # push undo snapshot
-        st.session_state.undo_stack.append(st.session_state.history.copy())
-        # append row
-        new_row = {
-            "timestamp": now,
-            "winner": winner,
-            "home_card": hc,
-            "away_card": ac,
-            "home_value": hv,
-            "away_value": av,
-            "home_class": hc_class,
-            "away_class": ac_class,
-            "home_strength": hs,
-            "away_strength": as_
-        }
-        st.session_state.history = pd.concat([st.session_state.history, pd.DataFrame([new_row])], ignore_index=True)
+def card_value(card):
+    return CARD_MAP.get(normalize(card), 0)
 
-# undo
-if st.button("Desfazer ultima rodada"):
-    if st.session_state.undo_stack:
-        st.session_state.history = st.session_state.undo_stack.pop()
+def card_class(card):
+    c = normalize(card)
+    if c in HIGH:
+        return "alta"
+    if c in MEDIUM:
+        return "media"
+    if c in LOW:
+        return "baixa"
+    return "tie"
+
+def card_strength(card):
+    return CARD_STRENGTH.get(normalize(card), 0)
+
+def push_undo():
+    st.session_state.undo_stack.append(st.session_state.history.copy())
+
+def append_round(home_card, away_card):
+    now = datetime.now()
+    hc = normalize(home_card)
+    ac = normalize(away_card)
+    hv = card_value(hc)
+    av = card_value(ac)
+    hc_class = card_class(hc)
+    ac_class = card_class(ac)
+    hs = card_strength(hc)
+    as_ = card_strength(ac)
+    if hv > av:
+        winner = "RED"  # CASA = VERMELHO
+    elif av > hv:
+        winner = "BLUE"
     else:
-        st.warning("Nada para desfazer.")
+        winner = "TIE"
+    row = {
+        "timestamp": now,
+        "winner": winner,
+        "home_card": hc,
+        "away_card": ac,
+        "home_value": hv,
+        "away_value": av,
+        "home_class": hc_class,
+        "away_class": ac_class,
+        "home_strength": hs,
+        "away_strength": as_
+    }
+    push_undo()
+    st.session_state.history = pd.concat([st.session_state.history, pd.DataFrame([row])], ignore_index=True)
+    # reset quick selections
+    st.session_state.sel_home = None
+    st.session_state.sel_away = None
 
-st.write("---")
+# ========== Input panel (horizontal compact) ==========
+st.subheader("Inserção rápida — selecione CASA (vermelho) e VISITANTE (azul). Ao ter ambos, a rodada é registrada automaticamente.")
 
-# ========== HISTORY GRID ==========
-st.subheader("Histórico (visual)")
+# Home (Casa) horizontal buttons
+st.markdown("**🔴 CASA (VERMELHO)**")
+cols_home = st.columns(len(CARD_ORDER))
+for i, val in enumerate(CARD_ORDER):
+    with cols_home[i]:
+        if st.button(val, key=f"home_btn_{val}"):
+            st.session_state.sel_home = val
+            st.success(f"Selecionado CASA {val}")
+            # if away already selected, append immediately
+            if st.session_state.sel_away:
+                append_round(st.session_state.sel_home, st.session_state.sel_away)
+
+# Away (Visitante) horizontal buttons
+st.markdown("**🔵 VISITANTE (AZUL)**")
+cols_away = st.columns(len(CARD_ORDER))
+for i, val in enumerate(CARD_ORDER):
+    with cols_away[i]:
+        if st.button(val, key=f"away_btn_{val}"):
+            st.session_state.sel_away = val
+            st.success(f"Selecionado VISITANTE {val}")
+            # if home already selected, append immediately
+            if st.session_state.sel_home:
+                append_round(st.session_state.sel_home, st.session_state.sel_away)
+
+# Visual of current quick selection
+sel_home = st.session_state.sel_home or "-"
+sel_away = st.session_state.sel_away or "-"
+st.info(f"Selecionado agora: CASA {sel_home}  —  VISITANTE {sel_away}")
+
+# Quick 1-clique (dropdown) — alternativa
+st.markdown("---")
+st.subheader("Adicionar rodada em 1 clique (opcional)")
+c1, c2, c3 = st.columns([3,3,2])
+with c1:
+    quick_home = st.selectbox("Casa (VERMELHO)", options=CARD_ORDER, index=0, key="quick_home")
+with c2:
+    quick_away = st.selectbox("Visitante (AZUL)", options=CARD_ORDER, index=0, key="quick_away")
+with c3:
+    if st.button("Adicionar rodada (1 clique)"):
+        append_round(quick_home, quick_away)
+        st.success(f"Rodada adicionada: CASA {quick_home} vs VISITANTE {quick_away}")
+
+# undo / clear controls
+st.markdown("---")
+cundo, cclear = st.columns([1,1])
+with cundo:
+    if st.button("Desfazer ultima"):
+        if st.session_state.undo_stack:
+            st.session_state.history = st.session_state.undo_stack.pop()
+            st.success("Última ação desfeita.")
+        else:
+            st.warning("Nada para desfazer.")
+with cclear:
+    if st.button("Limpar tudo"):
+        st.session_state.undo_stack.append(st.session_state.history.copy())
+        st.session_state.history = st.session_state.history.iloc[0:0]
+        st.session_state.sel_home = None
+        st.session_state.sel_away = None
+        st.success("Limpo.")
+
+st.markdown("---")
+
+# ========== Display history grid ==========
+st.subheader("Histórico (visual) — últimas entradas")
 history = st.session_state.history.copy()
 if history.empty:
-    st.info("Sem resultados ainda. Use a entrada acima para registrar rodadas.")
+    st.info("Sem entradas ainda.")
 else:
-    display = history.tail(MAX_COLS * MAX_LINES).reset_index(drop=True)
-    rows = [display.iloc[i:i+MAX_COLS] for i in range(0, len(display), MAX_COLS)]
-    for r in rows:
-        cols = st.columns(MAX_COLS)
-        for idx in range(MAX_COLS):
-            with cols[idx]:
-                if idx < len(r):
-                    row = r.iloc[idx]
-                    win = row["winner"]
-                    if win == "RED":
-                        label = f"🔴 {row['away_card']} ({row['away_class']})"
-                    elif win == "BLUE":
-                        label = f"🔵 {row['home_card']} ({row['home_class']})"
+    display = history.tail(MAX_DISPLAY).reset_index(drop=True)
+    rows = [display.iloc[i:i+9] for i in range(0, len(display), 9)]
+    for row_df in rows:
+        cols = st.columns(9)
+        for c_idx in range(9):
+            with cols[c_idx]:
+                if c_idx < len(row_df):
+                    r = row_df.iloc[c_idx]
+                    if r["winner"] == "RED":
+                        label = f"🔴 {r['home_card']} vs {r['away_card']} ({r['home_class']})"
+                    elif r["winner"] == "BLUE":
+                        label = f"🔵 {r['home_card']} vs {r['away_card']} ({r['away_class']})"
                     else:
-                        label = f"🟡 TIE"
+                        label = f"🟡 {r['home_card']} vs {r['away_card']} (TIE)"
                     if show_timestamps:
-                        st.caption(str(row["timestamp"]))
+                        st.caption(str(r["timestamp"]))
                     st.markdown(f"**{label}**")
                 else:
                     st.write("")
 
 st.markdown("---")
 
-# ========== ANALYSIS FUNCTIONS ==========
-def detect_patterns(df: pd.DataFrame) -> dict:
+# ========== Analysis functions ==========
+def detect_patterns(df):
     patterns = {"repeticao": False, "alternancia": False, "degrau": False, "quebra_controlada": False, "ciclo": False}
     if df.empty:
         return patterns
     winners = df["winner"].tolist()
-    classes = []  # use combined class per winner: winner's card class
+    classes = []
     for i,row in df.iterrows():
-        if row["winner"] == "BLUE":
+        if row["winner"] == "RED":
             classes.append(row["home_class"])
-        elif row["winner"] == "RED":
+        elif row["winner"] == "BLUE":
             classes.append(row["away_class"])
         else:
             classes.append("tie")
     n = len(winners)
-    if n >= 3 and winners[-1] == winners[-2] == winners[-3] and winners[-1] != "TIE":
+    if n >= 3 and winners[-1] == winners[-2] == winners[-3] and winners[-1] != "TIE" and winners[-1] is not None:
         patterns["repeticao"] = True
     if n >= 4 and winners[-1] == winners[-3] and winners[-2] == winners[-4] and winners[-1] != winners[-2]:
         patterns["alternancia"] = True
@@ -188,126 +233,104 @@ def detect_patterns(df: pd.DataFrame) -> dict:
             patterns["ciclo"] = True
     return patterns
 
-def compute_value_profile(df: pd.DataFrame, window: int = 10) -> dict:
+def compute_value_profile(df, window=10):
     if df.empty:
-        return {"n":0, "count_high":0, "count_med":0, "count_low":0, "avg_value":0.0, "high_ratio":0.0}
+        return {"n":0,"count_high":0,"count_med":0,"count_low":0,"avg_value":0.0,"high_ratio":0.0}
     sub = df.tail(window)
     n = len(sub)
-    # For profile we use both cards: count high when either winning card is high? We'll count both to profile deck
-    # Count highs/meds/lows by winner card (what determined result)
-    count_high = 0
-    count_med = 0
-    count_low = 0
+    count_high = 0; count_med = 0; count_low = 0
     values = []
     for i,row in sub.iterrows():
-        if row["winner"] == "BLUE":
-            cls = row["home_class"]
-            val = row["home_value"]
-        elif row["winner"] == "RED":
-            cls = row["away_class"]
-            val = row["away_value"]
+        if row["winner"] == "RED":
+            cls = row["home_class"]; val = row["home_value"]
+        elif row["winner"] == "BLUE":
+            cls = row["away_class"]; val = row["away_value"]
         else:
-            cls = "tie"
-            val = max(row["home_value"], row["away_value"])
+            cls = "tie"; val = max(row["home_value"] if not pd.isna(row["home_value"]) else 0, row["away_value"] if not pd.isna(row["away_value"]) else 0)
         values.append(val)
-        if cls == "alta":
-            count_high += 1
-        elif cls == "media":
-            count_med += 1
-        elif cls == "baixa":
-            count_low += 1
+        if cls == "alta": count_high += 1
+        elif cls == "media": count_med += 1
+        elif cls == "baixa": count_low += 1
     avg_value = float(np.mean(values)) if values else 0.0
     high_ratio = count_high / n if n>0 else 0.0
-    return {"n":n, "count_high":count_high, "count_med":count_med, "count_low":count_low, "avg_value":avg_value, "high_ratio":high_ratio}
+    return {"n":n,"count_high":count_high,"count_med":count_med,"count_low":count_low,"avg_value":avg_value,"high_ratio":high_ratio}
 
-def detect_break_score(df: pd.DataFrame) -> dict:
+def detect_break_score(df):
     if df.empty:
-        return {"break_score":0, "reason":""}
+        return {"break_score":0,"reason":""}
     n = len(df)
     score = 0
     reasons = []
     vp5 = compute_value_profile(df, window=5)
-    # many low winning cards in last 5
     if vp5["count_low"] >= 3:
-        score += 20
-        reasons.append(f"{vp5['count_low']}/5 cartas baixas vencedoras")
-    # last winner card baixa
+        score += 20; reasons.append(f"{vp5['count_low']}/5 cartas baixas vencedoras")
     last = df.iloc[-1]
-    last_class = last["home_class"] if last["winner"] == "BLUE" else (last["away_class"] if last["winner"]=="RED" else "tie")
+    last_class = None
+    if last["winner"] == "RED":
+        last_class = last["home_class"]
+    elif last["winner"] == "BLUE":
+        last_class = last["away_class"]
+    else:
+        last_class = "tie"
     if last_class == "baixa":
-        score += 15
-        reasons.append("Última carta vencedora baixa")
-    # alternancia acelerada
-    recent_winners = df["winner"].tolist()[-6:] if n>=6 else df["winner"].tolist()
-    if len(recent_winners) > 1:
-        alt = sum(1 for i in range(1,len(recent_winners)) if recent_winners[i] != recent_winners[i-1])
-        if (alt / (len(recent_winners)-1)) >= 0.75:
-            score += 25
-            reasons.append("Alternância acelerada")
-    # tie recent
+        score += 15; reasons.append("Ultima carta vencedora baixa")
+    recent = df["winner"].tolist()[-6:] if n>=6 else df["winner"].tolist()
+    if len(recent) > 1:
+        alt = sum(1 for i in range(1,len(recent)) if recent[i] != recent[i-1])
+        if (alt / (len(recent)-1)) >= 0.75:
+            score += 25; reasons.append("Alternancia acelerada")
     tie_recent = df["winner"].tolist()[-6:].count("TIE")
     if tie_recent >= 1:
-        score += tie_recent * 5
-        reasons.append(f"{tie_recent} ties recentes")
-    # if many highs recent in last 10 -> reduce break
+        score += tie_recent * 5; reasons.append(f"{tie_recent} ties recentes")
     vp10 = compute_value_profile(df, window=10)
     if vp10["count_high"] >= 4:
-        score -= 10
-        reasons.append("Muitas altas recentes (reduz risco)")
+        score -= 10; reasons.append("Muitas altas recentes (reduz risco)")
     score = int(max(0,min(100,score)))
-    return {"break_score":score, "reason":"; ".join(reasons)}
+    return {"break_score":score,"reason":"; ".join(reasons)}
 
-def weighted_probs(df: pd.DataFrame, window: int = 10) -> dict:
+def weighted_probs(df, window=10):
     if df.empty:
-        return {"red":49.0, "blue":49.0, "tie":2.0, "confidence":0.0}
+        return {"red":49.0,"blue":49.0,"tie":2.0,"confidence":0.0}
     sub = df.tail(window).reset_index(drop=True)
     m = len(sub)
-    weights = np.linspace(1.0, 0.2, m)
+    weights = np.linspace(1.0,0.2,m)
     weights = weights / weights.sum()
-    score = {"red":0.0, "blue":0.0, "tie":0.0}
+    scr = {"red":0.0,"blue":0.0,"tie":0.0}
     for i,row in sub.iterrows():
         w = weights[i]
-        # determine which card influenced winner for factor
-        if row["winner"] == "BLUE":
-            factor = card_strength(row["home_card"]) / 5.0
-        elif row["winner"] == "RED":
-            factor = card_strength(row["away_card"]) / 5.0
-        else:
-            # tie factor: use both low influence
-            factor = 0.6
         if row["winner"] == "RED":
-            score["red"] += w * (0.6 + 0.4 * factor)
+            factor = CARD_STRENGTH.get(row["home_card"],1)/5.0 if row["home_card"] else 0.6
+            scr["red"] += w * (0.6 + 0.4 * factor)
         elif row["winner"] == "BLUE":
-            score["blue"] += w * (0.6 + 0.4 * factor)
+            factor = CARD_STRENGTH.get(row["away_card"],1)/5.0 if row["away_card"] else 0.6
+            scr["blue"] += w * (0.6 + 0.4 * factor)
         else:
-            score["tie"] += w * (0.5 + 0.5 * (1 - factor))
-    for k in score:
-        score[k] += 1e-9
-    total = score["red"] + score["blue"] + score["tie"]
-    probs = {k: round((v/total)*100,1) for k,v in score.items()}
-    values = np.array(list(score.values()))
+            factor = 0.6
+            scr["tie"] += w * (0.5 + 0.5 * (1 - factor))
+    for k in scr: scr[k] += 1e-9
+    total = scr["red"] + scr["blue"] + scr["tie"]
+    probs = {k: round((v/total)*100,1) for k,v in scr.items()}
+    values = np.array(list(scr.values()))
     peakness = values.max() / values.sum()
     confidence = float(round(min(0.99, max(0.05, peakness)) * 100, 1))
     probs["confidence"] = confidence
     return probs
 
-def compute_manipulation_level(df: pd.DataFrame) -> int:
+def compute_manipulation_level(df):
     if df.empty:
         return 1
     winners = df["winner"].tolist()
     n = len(winners)
-    score = 0.0
-    # runs of low winning cards
     vals = []
     for i,row in df.iterrows():
-        if row["winner"] == "BLUE":
+        if row["winner"] == "RED":
             vals.append(row["home_class"])
-        elif row["winner"] == "RED":
+        elif row["winner"] == "BLUE":
             vals.append(row["away_class"])
         else:
             vals.append("tie")
-    low_run = 0
-    low_runs_count = 0
+    score = 0.0
+    low_run = 0; low_runs_count = 0
     for v in vals:
         if v == "baixa":
             low_run += 1
@@ -327,57 +350,54 @@ def compute_manipulation_level(df: pd.DataFrame) -> int:
     lvl = int(min(9, max(1, round(score))))
     return lvl
 
-def make_suggestion(df: pd.DataFrame, break_threshold_percent: int, window: int = 10) -> dict:
+def make_suggestion(df, window=10):
+    if df.empty:
+        return {"action":"wait","text":"AGUARDAR - sem dados","probs":{"red":49.0,"blue":49.0,"tie":2.0,"confidence":0.0},"break_score":0}
     probs = weighted_probs(df, window=window)
     break_info = detect_break_score(df)
     break_score = break_info["break_score"]
-    # Rule OU-OU
-    if break_score >= break_threshold_percent:
-        return {"action":"no_bet", "text":f"NAO APOSTAR - quebra provavel ({break_score}%)", "reason":break_info["reason"], "probs":probs, "break_score":break_score}
-    # tie case
-    if probs["tie"] >= 12.0:
-        return {"action":"bet_tie", "text":"APOSTAR TIE (🟡)", "reason":"Probabilidade de empate elevada", "probs":probs, "break_score":break_score}
-    # choose color by prob
+    patterns = detect_patterns(df)
+    manip = compute_manipulation_level(df)
+    any_pattern = any(patterns.values())
     top_color = "RED" if probs["red"] > probs["blue"] else "BLUE"
     top_prob = probs["red"] if top_color=="RED" else probs["blue"]
-    confidence = probs["confidence"]
-    # adjust thresholds by manipulation level
-    manip = compute_manipulation_level(df)
-    # If manipulation high, require stronger thresholds
-    prob_threshold = 60.0 + (5.0 if manip >= 7 else 0.0)
-    conf_threshold = 70.0 + (5.0 if manip >= 7 else 0.0)
-    if top_prob >= prob_threshold or confidence >= conf_threshold:
+    conf = probs["confidence"]
+    if probs["tie"] >= 12.0:
+        return {"action":"bet_tie","text":f"APOSTAR TIE (🟡) - prob {probs['tie']}%","probs":probs,"break_score":break_score}
+    if any_pattern or top_prob >= 55.0 or conf >= 50.0:
         emoji = "🔴" if top_color=="RED" else "🔵"
-        return {"action":"bet_color", "text":f"APOSTAR {top_color} ({emoji}) - prob {top_prob}% / conf {confidence}%", "reason":f"Prob >= {prob_threshold} ou conf >= {conf_threshold}", "probs":probs, "break_score":break_score}
-    return {"action":"wait", "text":"AGUARDAR - sem entrada segura", "reason":"Probabilidades insuficientes / manipulação ou break fraco", "probs":probs, "break_score":break_score}
+        text = f"APOSTAR {top_color} ({emoji}) - prob {top_prob}% / conf {conf}%"
+        if break_score >= break_threshold:
+            text += f"  ⚠ BREAK {break_score}%"
+        return {"action":"bet_color","text":text,"probs":probs,"break_score":break_score}
+    return {"action":"wait","text":"AGUARDAR - sem entrada segura","probs":probs,"break_score":break_score}
 
-# ========== RUN ANALYSIS ==========
-st.subheader("Analise e Previsao")
+# ========== Run analysis & display ==========
+st.subheader("Analise e Previsao (Modo Agressivo)")
+
 analysis_df = st.session_state.history.copy()
-
 patterns = detect_patterns(analysis_df)
 value_profile = compute_value_profile(analysis_df, window=analysis_window)
 break_info = detect_break_score(analysis_df)
 probs = weighted_probs(analysis_df, window=analysis_window)
 manip_level = compute_manipulation_level(analysis_df)
-suggestion = make_suggestion(analysis_df, break_threshold, window=analysis_window)
+suggestion = make_suggestion(analysis_df, window=analysis_window)
 
-# ========== DISPLAY ==========
 colA, colB = st.columns([2,1])
 with colA:
     detected = ", ".join([k for k,v in patterns.items() if v]) or "indefinido"
     st.markdown(f"**Padroes detectados:** {detected}")
     st.markdown(f"**Perfil de valor (ultimas {analysis_window}):** altas {value_profile['count_high']}, medias {value_profile['count_med']}, baixas {value_profile['count_low']}, avg {value_profile['avg_value']:.1f}")
-    st.markdown(f"**Nível de manipulacao (1-9):** {manip_level}")
+    st.markdown(f"**Nivel de manipulacao (1-9):** {manip_level}")
     st.markdown(f"**Break score:** {break_info['break_score']}%")
     if break_info["reason"]:
         st.write(f"Motivos: {break_info['reason']}")
     st.markdown(f"**Sugestao:** {suggestion['text']}")
-    if suggestion.get("reason"):
-        st.write(f"Observacao: {suggestion.get('reason')}")
+    if suggestion.get("probs"):
+        st.write(f"Observacao: {suggestion.get('probs')}")
 with colB:
-    st.metric("🔴 RED", f"{probs['red']} %")
-    st.metric("🔵 BLUE", f"{probs['blue']} %")
+    st.metric("🔴 RED (CASA)", f"{probs['red']} %")
+    st.metric("🔵 BLUE (VISITANTE)", f"{probs['blue']} %")
     st.metric("🟡 TIE", f"{probs['tie']} %")
     if show_confidence_bar:
         st.progress(int(min(100, probs["confidence"])))
@@ -389,16 +409,16 @@ if analysis_df.empty:
 else:
     st.dataframe(analysis_df.tail(30).reset_index(drop=True))
 
-# ========== TOOLS ==========
+# ========== Tools ==========
 st.markdown("---")
 st.header("Ferramentas")
 csv_full = st.session_state.history.to_csv(index=False)
-st.download_button("Exportar historico completo (CSV)", data=csv_full, file_name="history_football_studio_full.csv")
+st.download_button("Exportar historico completo (CSV)", data=csv_full, file_name="history_full.csv")
 
 if st.button("Gerar relatorio (TXT)"):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     detected_list = ", ".join([k for k,v in patterns.items() if v]) or "indefinido"
-    txt = f"Football Studio Analyzer - Relatorio Profissional\nGerado em: {now}\n"
+    txt = f"Football Studio Pro - Relatorio\nGerado em: {now}\n"
     txt += f"Padroes detectados: {detected_list}\n"
     txt += f"Perfil valor (ultimas {analysis_window}): altas {value_profile['count_high']}, medias {value_profile['count_med']}, baixas {value_profile['count_low']}\n"
     txt += f"Break score: {break_info['break_score']}% - {break_info['reason']}\n"
@@ -410,4 +430,4 @@ if st.button("Gerar relatorio (TXT)"):
     txt += analysis_df.tail(30).to_csv(index=False)
     st.download_button("Baixar relatorio (TXT)", data=txt, file_name="relatorio_football_studio.txt")
 
-st.caption("Analise hibrida: valor das cartas + padrao de cores. Probabilidades sao estimativas; aposte com responsabilidade.")
+st.caption("Analise hibrida: valor das cartas + padrao de cores. Modo agressivo. Probabilidades sao estimativas; aposte com responsabilidade.")
